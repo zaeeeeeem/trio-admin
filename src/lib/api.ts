@@ -1,10 +1,5 @@
 import axios, { AxiosError, type AxiosInstance, type AxiosResponse } from 'axios';
-
-type ApiEnvelope<T> = {
-  success: boolean;
-  message?: string;
-  data: T;
-};
+import type { ApiResponse } from '../types/api';
 
 const resolveBaseUrl = () => import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
 
@@ -28,9 +23,9 @@ api.interceptors.request.use((config) => {
 });
 
 api.interceptors.response.use(
-  (response: AxiosResponse<ApiEnvelope<unknown>>) => {
+  (response: AxiosResponse<ApiResponse<unknown>>) => {
     const payload = response.data;
-    if (isApiEnvelope(payload)) {
+    if (isApiResponse(payload)) {
       if (payload.success) {
         return payload.data;
       }
@@ -42,7 +37,7 @@ api.interceptors.response.use(
         response.request,
         response
       );
-      (apiError as AxiosError & { payload?: ApiEnvelope<unknown> }).payload = payload;
+      (apiError as AxiosError & { payload?: ApiResponse<unknown> }).payload = payload;
       throw apiError;
     }
 
@@ -70,7 +65,7 @@ export const withTokenHeaders = (
   };
 };
 
-function isApiEnvelope<T>(value: unknown): value is ApiEnvelope<T> {
+function isApiResponse<T>(value: unknown): value is ApiResponse<T> {
   if (typeof value !== 'object' || value === null || !('success' in value)) {
     return false;
   }
@@ -78,4 +73,3 @@ function isApiEnvelope<T>(value: unknown): value is ApiEnvelope<T> {
 }
 
 export const apiClient = api;
-export type { ApiEnvelope };
