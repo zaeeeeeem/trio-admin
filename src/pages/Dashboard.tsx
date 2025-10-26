@@ -13,6 +13,7 @@ import {
   Star,
 } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
+import type { PieLabelRenderProps } from 'recharts';
 
 export function Dashboard() {
   const [stats, setStats] = useState<any>(null);
@@ -160,12 +161,16 @@ export function Dashboard() {
                   cx="50%"
                   cy="50%"
                   labelLine={false}
-                  label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`}
+                  label={(props: PieLabelRenderProps) => {
+                    const name = typeof props.name === 'string' ? props.name : '';
+                    const percentValue = typeof props.percent === 'number' ? props.percent : 0;
+                    return `${name}: ${(percentValue * 100).toFixed(0)}%`;
+                  }}
                   outerRadius={80}
                   fill="#8884d8"
                   dataKey="totalSold"
                 >
-                  {bestSellers.map((entry, index) => (
+                  {bestSellers.map((_, index) => (
                     <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                   ))}
                 </Pie>

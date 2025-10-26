@@ -30,7 +30,7 @@ export function Categories() {
       setLoading(true);
       const response = await api.getCategories();
       if (response.success) {
-        setCategories(response.data || []);
+        setCategories(response.data ?? []);
       }
     } catch (error) {
       toast.error('Failed to load categories');
@@ -47,7 +47,12 @@ export function Categories() {
       };
 
       if (editingCategory) {
-        await api.updateCategory(editingCategory._id, payload);
+        const categoryId = editingCategory.id ?? editingCategory._id;
+        if (!categoryId) {
+          toast.error('Unable to determine category identifier');
+          return;
+        }
+        await api.updateCategory(categoryId, payload);
         toast.success('Category updated successfully');
       } else {
         await api.createCategory(payload);
@@ -91,7 +96,7 @@ export function Categories() {
 
   const getParentName = (parentId?: string) => {
     if (!parentId) return 'Root';
-    const parent = categories.find((c) => c._id === parentId);
+    const parent = categories.find((c) => (c.id ?? c._id) === parentId);
     return parent?.name || 'Unknown';
   };
 
@@ -113,7 +118,18 @@ export function Categories() {
           <Button size="sm" variant="ghost" onClick={() => handleEdit(row)}>
             <Edit size={16} />
           </Button>
-          <Button size="sm" variant="danger" onClick={() => handleDelete(row._id)}>
+          <Button
+            size="sm"
+            variant="danger"
+            onClick={() => {
+              const categoryId = row.id ?? row._id;
+              if (categoryId) {
+                handleDelete(categoryId);
+              } else {
+                toast.error('Unable to determine category identifier');
+              }
+            }}
+          >
             <Trash2 size={16} />
           </Button>
         </div>
@@ -194,9 +210,9 @@ export function Categories() {
             >
               <option value="">None (Root Category)</option>
               {categories
-                .filter((c) => c._id !== editingCategory?._id)
+                .filter((c) => (c.id ?? c._id) !== (editingCategory?.id ?? editingCategory?._id))
                 .map((cat) => (
-                  <option key={cat._id} value={cat._id}>
+                  <option key={cat.id ?? cat._id ?? cat.name} value={cat.id ?? cat._id ?? ''}>
                     {cat.name}
                   </option>
                 ))}

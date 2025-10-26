@@ -38,8 +38,8 @@ export function Admins() {
       setLoading(true);
       const response = await api.getAdmins(page, 10);
       if (response.success) {
-        setAdmins(response.data.admins || []);
-        setTotalPages(response.data.pagination?.totalPages || 1);
+        setAdmins(response.data?.admins ?? []);
+        setTotalPages(response.data?.pagination?.totalPages ?? 1);
       }
     } catch (error) {
       toast.error('Failed to load admins');
@@ -59,10 +59,15 @@ export function Admins() {
         if (formData.password) {
           updateData.password = formData.password;
         }
-        await api.updateAdmin(editingAdmin._id, updateData);
+        const adminId = editingAdmin.id ?? editingAdmin._id;
+        if (!adminId) {
+          toast.error('Unable to determine admin identifier');
+          return;
+        }
+        await api.updateAdmin(adminId, updateData);
         toast.success('Admin updated successfully');
       } else {
-        await api.createAdmin(formData);
+      await api.createAdmin(formData);
         toast.success('Admin created successfully');
       }
       setShowModal(false);
@@ -144,15 +149,22 @@ export function Admins() {
             size="sm"
             variant="ghost"
             onClick={() => handleEdit(row)}
-            disabled={row._id === currentAdmin?._id}
+            disabled={(row.id ?? row._id) === (currentAdmin?.id ?? currentAdmin?._id)}
           >
             <Edit size={16} />
           </Button>
           <Button
             size="sm"
             variant="danger"
-            onClick={() => handleDelete(row._id)}
-            disabled={row._id === currentAdmin?._id}
+            onClick={() => {
+              const adminId = row.id ?? row._id;
+              if (adminId) {
+                handleDelete(adminId);
+              } else {
+                toast.error('Unable to determine admin identifier');
+              }
+            }}
+            disabled={(row.id ?? row._id) === (currentAdmin?.id ?? currentAdmin?._id)}
           >
             <Trash2 size={16} />
           </Button>

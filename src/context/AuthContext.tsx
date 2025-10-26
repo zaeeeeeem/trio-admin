@@ -26,7 +26,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       try {
         const response = await api.getProfile();
         if (response.success) {
-          setAdmin(response.data);
+          setAdmin(response.data ?? null);
         }
       } catch (error) {
         sessionStorage.removeItem('token');
@@ -39,7 +39,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const response = await api.login(email, password);
     if (response.success && response.data) {
       sessionStorage.setItem('token', response.data.token);
-      setAdmin(response.data.admin);
+      setAdmin(response.data.admin ?? null);
     }
   };
 

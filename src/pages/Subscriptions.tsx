@@ -38,8 +38,8 @@ export function Subscriptions() {
 
       const response = await api.getSubscriptions(filters);
       if (response.success) {
-        setSubscriptions(response.data.subscriptions || []);
-        setTotalPages(response.data.pagination?.totalPages || 1);
+        setSubscriptions(response.data?.subscriptions ?? []);
+        setTotalPages(response.data?.pagination?.totalPages ?? 1);
       }
     } catch (error) {
       toast.error('Failed to load subscriptions');
@@ -52,7 +52,7 @@ export function Subscriptions() {
     try {
       const response = await api.getSubscriptionPlans();
       if (response.success) {
-        setPlans(response.data || []);
+        setPlans(response.data ?? []);
       }
     } catch (error) {
       console.error('Failed to load plans');
@@ -74,7 +74,12 @@ export function Subscriptions() {
   const handleSubmitPlan = async () => {
     try {
       if (editingPlan) {
-        await api.updateSubscriptionPlan(editingPlan._id, planFormData);
+        const planId = editingPlan.id ?? editingPlan._id;
+        if (!planId) {
+          toast.error('Unable to determine plan identifier');
+          return;
+        }
+        await api.updateSubscriptionPlan(planId, planFormData);
         toast.success('Plan updated successfully');
       } else {
         await api.createSubscriptionPlan(planFormData);
@@ -117,7 +122,7 @@ export function Subscriptions() {
   };
 
   const getPlanName = (planId: string) => {
-    const plan = plans.find((p) => p._id === planId);
+    const plan = plans.find((p) => (p.id ?? p._id) === planId);
     return plan?.name || 'Unknown Plan';
   };
 
@@ -161,7 +166,14 @@ export function Subscriptions() {
         <Button
           size="sm"
           variant="danger"
-          onClick={() => handleCancelSubscription(row._id)}
+          onClick={() => {
+            const subscriptionId = row.id ?? row._id;
+            if (subscriptionId) {
+              handleCancelSubscription(subscriptionId);
+            } else {
+              toast.error('Unable to determine subscription identifier');
+            }
+          }}
           disabled={row.status !== 'active'}
         >
           <Ban size={16} />
@@ -189,7 +201,18 @@ export function Subscriptions() {
           <Button size="sm" variant="ghost" onClick={() => handleEditPlan(row)}>
             <Edit size={16} />
           </Button>
-          <Button size="sm" variant="danger" onClick={() => handleDeletePlan(row._id)}>
+          <Button
+            size="sm"
+            variant="danger"
+            onClick={() => {
+              const planId = row.id ?? row._id;
+              if (planId) {
+                handleDeletePlan(planId);
+              } else {
+                toast.error('Unable to determine plan identifier');
+              }
+            }}
+          >
             <Trash2 size={16} />
           </Button>
         </div>

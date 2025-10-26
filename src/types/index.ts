@@ -1,9 +1,10 @@
 export * from './api';
 
-import type { Product } from './api';
+import type { CursorPagination, Product } from './api';
 
 export interface Admin {
-  _id: string;
+  id: string;
+  _id?: string;
   name: string;
   email: string;
   role: 'admin' | 'super_admin';
@@ -11,7 +12,8 @@ export interface Admin {
 }
 
 export interface Category {
-  _id: string;
+  id: string;
+  _id?: string;
   name: string;
   slug: string;
   description?: string;
@@ -25,10 +27,13 @@ export interface OrderItem {
   quantity: number;
   price: number;
   product?: Product;
+  productName?: string;
+  subtotal?: number;
 }
 
 export interface Order {
-  _id: string;
+  id: string;
+  _id?: string;
   sessionId: string;
   customerEmail: string;
   customerPhone?: string;
@@ -42,8 +47,26 @@ export interface Order {
   updatedAt: string;
 }
 
+export interface CreateOrderItem {
+  productId: string;
+  quantity: number;
+}
+
+export interface CreateOrderPayload {
+  sessionId?: string;
+  customerEmail: string;
+  customerPhone?: string;
+  shippingAddress?: string;
+  items: CreateOrderItem[];
+  paymentDetails?: {
+    gateway: string;
+    transactionRef: string;
+  };
+}
+
 export interface Review {
-  _id: string;
+  id: string;
+  _id?: string;
   productId: string;
   rating: number;
   comment?: string;
@@ -51,10 +74,25 @@ export interface Review {
   approved: boolean;
   createdAt: string;
   updatedAt: string;
+  product?: Product;
+}
+
+export interface ReviewInput {
+  productId: string;
+  rating: number;
+  comment?: string;
+  imageUrl?: string;
+  approved?: boolean;
+}
+
+export interface ReviewListResponse {
+  reviews: Review[];
+  pagination: CursorPagination;
 }
 
 export interface SubscriptionPlan {
-  _id: string;
+  id: string;
+  _id?: string;
   name: string;
   frequency: 'weekly' | 'monthly' | 'custom';
   price: number;
@@ -64,7 +102,8 @@ export interface SubscriptionPlan {
 }
 
 export interface Subscription {
-  _id: string;
+  id: string;
+  _id?: string;
   planId: string;
   sessionId: string;
   customerEmail: string;

@@ -111,9 +111,10 @@ const getProductBySlug = async (slug) => {
 
   if (data.success) {
     // Each product now includes:
-    // - images[] where each image has { publicUrl, alt, sortOrder, isPrimary, ... }
+    // - images[] where each image has { viewUrl, alt, sortOrder, isPrimary, ... }
     // - variants[] for SKU-based options
     // - legacyVariantAttributes[] for older attribute pairs (name/value)
+    // viewUrl values are presigned S3 links that expire after the backend's configured TTL.
     return data.data;
   }
 
@@ -123,14 +124,23 @@ const getProductBySlug = async (slug) => {
 
 ### Upload Product Images (Admin only)
 
-Cloudinary uploads happen server-side via `POST /api/products/:productId/images/upload`. Send one request per image.
+S3 uploads happen server-side via `POST /api/products/:productId/images/upload`. You can send one request containing multiple files or fall back to a single file using the legacy `file` field.
 
 ```javascript
-const uploadProductImage = async ({ token, productId, file, isPrimary = false, alt, sortOrder }) => {
+const uploadProductImages = async ({
+  token,
+  productId,
+  files,
+  primaryIndex,
+  alt,
+  sortOrder
+}) => {
   const form = new FormData();
-  form.append('file', file); // File object from <input type="file">
+  files.forEach((file) => form.append('files', file)); // File object(s) from <input type="file" multiple>
 
-  if (isPrimary) form.append('isPrimary', 'true');
+  if (typeof primaryIndex === 'number') {
+    form.append('primaryIndex', String(primaryIndex));
+  }
   if (alt) form.append('alt', alt);
   if (typeof sortOrder === 'number') form.append('sort_order', String(sortOrder));
 
@@ -147,23 +157,19 @@ const uploadProductImage = async ({ token, productId, file, isPrimary = false, a
     throw new Error(payload.message);
   }
 
-  return payload.data; // Contains publicUrl, cloudinaryPublicId, isPrimary, etc.
+  return Array.isArray(payload.data) ? payload.data : [payload.data]; // Includes fresh viewUrl values for immediate previews.
 };
 
-// Example: upload hero + gallery images
+// Example: upload hero + gallery images in one request
 const uploadGallery = async ({ token, productId, files }) => {
-  let index = 0;
-  for (const file of files) {
-    await uploadProductImage({
-      token,
-      productId,
-      file,
-      isPrimary: index === 0, // mark first upload as primary
-      sortOrder: index,
-      alt: file.name.replace(/\.[^.]+$/, '')
-    });
-    index += 1;
-  }
+  return uploadProductImages({
+    token,
+    productId,
+    files,
+    primaryIndex: 0, // mark first file as primary
+    sortOrder: 0,
+    alt: 'Product gallery image'
+  });
 };
 ```
 
@@ -241,10 +247,32 @@ const deleteVariant = async ({ token, productId, variantId }) => {
 
 ### Working with Product Images in the UI
 
-- Always render `image.publicUrl` for the display URL. The legacy `imageUrl` remains for backward compatibility but `publicUrl` already points at the secure Cloudinary asset (or falls back to the legacy URL).
+- Always render `image.viewUrl` for the display URL. The value is a short-lived presigned GET link—refetch the endpoint (e.g. list images or reload the product) when it expires.
+- URLs typically last 10 minutes by default; backend operators can adjust the TTL via `AWS_S3_SIGNED_URL_TTL_SECONDS`.
+- There is no need to persist `storageKey` on the client; delete operations resolve it server-side.
 - `alt` and `sortOrder` are optional helpers for accessibility and gallery ordering.
 - To reorder a gallery item, call `PATCH /api/products/:productId/images/:imageId` with a new `sort_order`.
 - To toggle the hero image, call the same endpoint with `{ "isPrimary": true }`—the backend clears other primaries automatically.
+
+### Refreshing Expired View URLs
+
+When a rendered image fails because its `viewUrl` expired, trigger one of the read endpoints to get a replacement:
+
+```javascript
+const refreshImageViewUrl = async ({ productId, imageId }) => {
+  const response = await fetch(
+    `${API_BASE_URL}/api/products/${productId}/images/${imageId}`,
+    { method: 'GET', ...config }
+  );
+  const payload = await response.json();
+  if (!payload.success) {
+    throw new Error(payload.message);
+  }
+  return payload.data.viewUrl;
+};
+```
+
+For galleries, calling `GET /api/products/:productId/images` or refetching the full product payload is often sufficient to refresh all `viewUrl` values in one go.
 
 ## Order Processing
 
@@ -331,12 +359,47 @@ const getCategories = async () => {
 ### Get Product Reviews
 
 ```javascript
-const getProductReviews = async (productId) => {
+const buildReviewParams = ({ limit, cursor, approved }) => {
+  const params = new URLSearchParams({
+    limit: String(limit ?? 10),
+    approved: String(approved ?? true)
+  });
+
+  if (cursor) {
+    params.set('cursor', cursor);
+  }
+
+  return params;
+};
+
+const listAllReviews = async ({ limit = 10, cursor, approved = true } = {}) => {
+  const params = buildReviewParams({ limit, cursor, approved });
+  const response = await fetch(`${API_BASE_URL}/api/reviews?${params.toString()}`, {
+    method: 'GET',
+    ...config
+  });
+
+  const data = await response.json();
+  if (!data.success) {
+    throw new Error(data.message);
+  }
+
+  return data.data; // { items, pagination }
+};
+
+const getProductReviews = async ({ productId, limit = 10, cursor, approved = true }) => {
+  const params = buildReviewParams({ limit, cursor, approved });
   const response = await fetch(
-    `${API_BASE_URL}/api/reviews/product/${productId}?approved=true`,
+    `${API_BASE_URL}/api/reviews/product/${productId}?${params.toString()}`,
     { method: 'GET', ...config }
   );
-  return response.json();
+
+  const data = await response.json();
+  if (!data.success) {
+    throw new Error(data.message);
+  }
+
+  return data.data;
 };
 ```
 

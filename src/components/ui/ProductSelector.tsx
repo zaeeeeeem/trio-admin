@@ -1,14 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { api } from '../../services/api';
 import { Search, X } from 'lucide-react';
-
-interface Product {
-  _id: string;
-  name: string;
-  images?: { url: string; isPrimary: boolean }[];
-  price: number;
-  productType: string;
-}
+import type { Product, ProductImage } from '../../types';
 
 interface ProductSelectorProps {
   onSelect: (product: Product | null) => void;
@@ -64,9 +57,9 @@ export function ProductSelector({
   const fetchProducts = async (query: string) => {
     try {
       setLoading(true);
-      const response = await api.getProducts({ search: query, limit: 10 });
+      const response = await api.getProducts({ search: query.trim(), limit: 10 });
       if (response.success) {
-        setProducts(response.data.products || []);
+        setProducts(response.data?.products ?? []);
         setShowDropdown(true);
       }
     } catch (error) {
@@ -90,7 +83,22 @@ export function ProductSelector({
 
   const getPrimaryImage = (product: Product) => {
     const primary = product.images?.find((img) => img.isPrimary);
-    return primary?.url || product.images?.[0]?.url || 'https://via.placeholder.com/40';
+    if (primary) {
+      return (
+        primary.viewUrl ||
+        primary.publicUrl ||
+        primary.imageUrl ||
+        'https://via.placeholder.com/40'
+      );
+    }
+
+    const fallback = product.images?.[0] as ProductImage | undefined;
+    return (
+      fallback?.viewUrl ||
+      fallback?.publicUrl ||
+      fallback?.imageUrl ||
+      'https://via.placeholder.com/40'
+    );
   };
 
   return (
@@ -105,7 +113,10 @@ export function ProductSelector({
           <div className="flex-1">
             <p className="font-medium text-[#1E2934BA]">{selectedProduct.name}</p>
             <p className="text-sm text-[#775596]">
-              ${selectedProduct.price.toFixed(2)} • {selectedProduct.productType}
+              {typeof selectedProduct.price === 'number'
+                ? `$${selectedProduct.price.toFixed(2)}`
+                : 'N/A'}{' '}
+              • {selectedProduct.productType ?? 'Unknown'}
             </p>
           </div>
           <button
@@ -140,7 +151,7 @@ export function ProductSelector({
           )}
           {products.map((product) => (
             <button
-              key={product._id}
+              key={product.id ?? product._id ?? product.slug}
               onClick={() => handleSelect(product)}
               className="w-full flex items-center gap-3 p-3 hover:bg-[#F2DFFF] hover:bg-opacity-50 transition-colors border-b border-[#F2DFFF] last:border-b-0"
             >
@@ -152,7 +163,8 @@ export function ProductSelector({
               <div className="flex-1 text-left">
                 <p className="font-medium text-[#1E2934BA]">{product.name}</p>
                 <p className="text-sm text-[#775596]">
-                  ${product.price.toFixed(2)} • {product.productType}
+                  {typeof product.price === 'number' ? `$${product.price.toFixed(2)}` : 'N/A'} •{' '}
+                  {product.productType ?? 'Unknown'}
                 </p>
               </div>
             </button>

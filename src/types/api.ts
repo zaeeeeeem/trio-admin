@@ -1,14 +1,15 @@
 export type ApiResponse<T> = {
   success: boolean;
   message?: string;
-  data: T;
+  data?: T;
 };
 
 export type PagePagination = {
   page: number;
   limit: number;
   totalPages: number;
-  totalItems: number;
+  total?: number;
+  totalItems?: number;
 };
 
 export type CursorPagination = {
@@ -38,12 +39,15 @@ export interface VariantAttribute {
 export interface ProductImage {
   _id: string;
   productId: string;
-  publicUrl: string;
+  publicUrl?: string;
+  viewUrl?: string;
   isPrimary: boolean;
   alt?: string;
   sortOrder?: number;
   imageUrl?: string;
   cloudinaryPublicId?: string;
+  storageKey?: string;
+  etag?: string;
   bytes?: number;
   width?: number;
   height?: number;
@@ -54,6 +58,7 @@ export interface ProductImage {
 
 export interface ProductVariant {
   _id: string;
+  id?: string;
   productId: string;
   sku: string;
   price: number;
@@ -65,7 +70,8 @@ export interface ProductVariant {
 }
 
 export interface Product {
-  _id: string;
+  id: string;
+  _id?: string;
   name: string;
   slug: string;
   description?: string;
@@ -104,8 +110,10 @@ export interface ImageListParams {
 }
 
 export interface UploadProductImagePayload {
-  file: File;
+  files?: File[];
+  file?: File;
   isPrimary?: boolean;
+  primaryIndex?: number;
   alt?: string;
   sortOrder?: number;
 }

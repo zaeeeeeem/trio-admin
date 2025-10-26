@@ -349,8 +349,11 @@ This is the complete backend REST API documentation for the Trio by Maham Café 
     "features": "Rich flavor, High caffeine",
     "images": [
       {
-        "url": "https://example.com/image1.jpg",
-        "isPrimary": true
+        "id": "675a12d3e9dcd6001234abcd",
+        "viewUrl": "https://media.example.com/app/uploads/products/675a12b8e9dcd6001234abca/hero-1234abcd.webp?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Expires=600&X-Amz-Signature=...",
+        "isPrimary": true,
+        "alt": "Front hero shot",
+        "sortOrder": 0
       }
     ],
     "variants": [
@@ -407,43 +410,59 @@ This is the complete backend REST API documentation for the Trio by Maham Café 
 
 ## Product Images
 
-Product images are uploaded to Cloudinary and stored as separate MongoDB documents linked to their product. Each product can have many images, but only one may be flagged as primary at a time. Responses expose a computed `publicUrl` that prefers Cloudinary’s `secure_url` while keeping the legacy `imageUrl` field populated for older clients.
+Product images are uploaded to Amazon S3 via the backend and saved as separate MongoDB documents linked to their product. Each product can have many images, but only one may be flagged as primary at a time. Read responses now expose a `viewUrl` property—a presigned GET link that expires after the configured TTL—while legacy `publicUrl` / `secureUrl` fields remain stored for backwards compatibility. The lifetime of each `viewUrl` is controlled by the `AWS_S3_SIGNED_URL_TTL_SECONDS` environment variable (defaults to 600 seconds); clients should refetch the relevant endpoint whenever a URL expires.
 
-### Upload image (Admin only)
+### Upload image(s) (Admin only)
 - **POST** `/api/products/:productId/images/upload`
 - **Headers:** `Authorization: Bearer {token}`
 - **Body:** `multipart/form-data`
-  - `file` (binary, required)
-  - `isPrimary` (boolean, optional)
-  - `alt` (string, optional, ≤255 chars)
-  - `sort_order` (integer, optional)
+  - `files` (binary, required — append multiple entries with the same field name)
+  - `file` (binary, optional legacy single-file field)
+  - `isPrimary` (boolean, optional — when true, the first uploaded file becomes primary)
+  - `primaryIndex` (integer, optional — zero-based index of the uploaded file that should be primary)
+  - `alt` (string, optional, ≤255 chars — applied to all uploaded files; edit individually later via PATCH)
+  - `sort_order` (integer, optional — starting order; increments by one for additional files when provided)
+- **Returns:** When a single file is uploaded the response contains one object; multi-file requests return an array of newly created image records. Returned objects already include a short-lived `viewUrl` suitable for immediate rendering.
 - **Typical client flow:**
-  1. Construct `FormData` and append `file` (e.g. `form.append('file', selectedFile)`).
-  2. Optionally append `isPrimary`, `alt`, and `sort_order`.
-  3. POST to `/images/upload` with the admin bearer token.
-  4. Repeat for each gallery image—call once per file. The first request with `isPrimary=true` (or the first image when none are flagged) becomes the hero image.
+  1. Construct `FormData` and append one or more files (e.g. `form.append('files', file)` in a loop).
+  2. Optionally append `isPrimary=true` or `primaryIndex=2` to mark the hero image in the same request.
+  3. POST to `/images/upload` with the admin bearer token. The backend handles the S3 upload and metadata creation atomically.
 - **Response:**
   ```json
   {
     "success": true,
-    "data": {
-      "_id": "675a12d3e9dcd6001234abcd",
-      "productId": "675a12b8e9dcd6001234abca",
-      "cloudinaryPublicId": "app/uploads/products/675a12b8e9dcd6001234abca/hero_x1yz",
-      "secureUrl": "https://res.cloudinary.com/your-cloud/image/upload/v1698153600/app/uploads/products/675a12b8e9dcd6001234abca/hero_x1yz.webp",
-      "imageUrl": "https://res.cloudinary.com/your-cloud/image/upload/v1698153600/app/uploads/products/675a12b8e9dcd6001234abca/hero_x1yz.webp",
-      "format": "webp",
-      "bytes": 284320,
-      "width": 1280,
-      "height": 720,
-      "etag": "e2bd0f34c1234caab567890",
-      "isPrimary": true,
-      "alt": "Front hero shot",
-      "sortOrder": 0,
-      "publicUrl": "https://res.cloudinary.com/your-cloud/image/upload/v1698153600/app/uploads/products/675a12b8e9dcd6001234abca/hero_x1yz.webp",
-      "createdAt": "2025-10-24T12:00:00.000Z",
-      "updatedAt": "2025-10-24T12:00:00.000Z"
-    }
+    "data": [
+      {
+        "id": "675a12d3e9dcd6001234abcd",
+        "productId": "675a12b8e9dcd6001234abca",
+        "viewUrl": "https://media.example.com/app/uploads/products/675a12b8e9dcd6001234abca/hero-1234abcd.webp?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Expires=600&X-Amz-Signature=...",
+        "format": "image/webp",
+        "bytes": 284320,
+        "width": null,
+        "height": null,
+        "etag": "\"e2bd0f34c1234caab567890\"",
+        "isPrimary": true,
+        "alt": "Front hero shot",
+        "sortOrder": 0,
+        "createdAt": "2025-10-24T12:00:00.000Z",
+        "updatedAt": "2025-10-24T12:00:00.000Z"
+      },
+      {
+        "id": "675a12d3e9dcd6001234abce",
+        "productId": "675a12b8e9dcd6001234abca",
+        "viewUrl": "https://media.example.com/app/uploads/products/675a12b8e9dcd6001234abca/detail-5678efgh.webp?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Expires=600&X-Amz-Signature=...",
+        "format": "image/webp",
+        "bytes": 192004,
+        "width": null,
+        "height": null,
+        "etag": "\"9acd0f34c1234caab567812\"",
+        "isPrimary": false,
+        "alt": "Front hero shot",
+        "sortOrder": 1,
+        "createdAt": "2025-10-24T12:00:01.000Z",
+        "updatedAt": "2025-10-24T12:00:01.000Z"
+      }
+    ]
   }
   ```
 
@@ -456,11 +475,19 @@ Product images are uploaded to Cloudinary and stored as separate MongoDB documen
     "data": {
       "items": [
         {
-          "_id": "675a12d3e9dcd6001234abcd",
-          "publicUrl": "https://res.cloudinary.com/.../hero_x1yz.webp",
+          "id": "675a12d3e9dcd6001234abcd",
+          "productId": "675a12b8e9dcd6001234abca",
+          "viewUrl": "https://media.example.com/app/uploads/products/675a12b8e9dcd6001234abca/hero-1234abcd.webp?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Expires=600&X-Amz-Signature=...",
           "isPrimary": true,
           "alt": "Front hero shot",
-          "sortOrder": 0
+          "sortOrder": 0,
+          "format": "image/webp",
+          "bytes": 284320,
+          "width": null,
+          "height": null,
+          "etag": "\"e2bd0f34c1234caab567890\"",
+          "createdAt": "2025-10-24T12:00:00.000Z",
+          "updatedAt": "2025-10-24T12:00:00.000Z"
         }
       ],
       "pagination": {
@@ -473,6 +500,7 @@ Product images are uploaded to Cloudinary and stored as separate MongoDB documen
 
 ### Get product image by ID
 - **GET** `/api/products/:productId/images/:imageId`
+- **Returns:** Image metadata including `viewUrl` (short-lived presigned URL). Refetch after expiry to obtain a new link; URLs expire after the configured TTL.
 
 ### Update metadata (Admin only)
 - **PATCH** `/api/products/:productId/images/:imageId`
@@ -487,13 +515,9 @@ Product images are uploaded to Cloudinary and stored as separate MongoDB documen
 - Setting `isPrimary` to `true` automatically clears the flag on sibling images within the same product.
 
 ### Delete image (Admin only)
-- **DELETE** `/api/products/:productId/images/:imageId?deleteFile=true`
-- When `deleteFile=true`, the backend also removes the corresponding Cloudinary asset if a `cloudinaryPublicId` is stored. Failures in Cloudinary deletion are logged but do not stop the metadata removal.
-
-### Unsigned uploads (optional client flow)
-
-If you prefer client-side uploads, create an unsigned Cloudinary `upload_preset` and expose it on the frontend. The backend still expects you to call `POST /images/upload` so metadata is stored and the single-primary invariant is enforced. The preset name can be provided through `CLOUDINARY_UPLOAD_PRESET`; it is informational only for the multer path described above.
 - **DELETE** `/api/products/:productId/images/:imageId`
+- **Query Params:**
+  - `deleteFile` (boolean) — when true, the backend also removes the corresponding S3 object if a `storageKey` is stored. Failures in the remote deletion are logged but do not stop the metadata removal.
 - **Headers:** `Authorization: Bearer {token}`
 - **Response:**
   ```json
@@ -611,27 +635,44 @@ Product variants represent purchasable SKUs per product. Each variant tracks pri
   }
   ```
 
-### Get Reviews by Product
-- **GET** `/api/reviews/product/:productId?approved=true`
+### List All Reviews (paginated)
+- **GET** `/api/reviews?limit=10&cursor=<reviewId>&approved=true`
 - **Query Params:**
-  - `approved`: Filter by approval status (true/false)
+  - `limit` (optional, default `10`, max `100`)
+  - `cursor` (optional, pass the `_id` from the previous page to get the next batch)
+  - `approved` (optional, `true|false` filter)
 - **Response:**
   ```json
   {
     "success": true,
-    "data": [
-      {
-        "id": "review_id",
-        "productId": "product_id",
-        "rating": 5,
-        "comment": "Excellent product!",
-        "imageUrl": "https://example.com/review.jpg",
-        "isApproved": true,
-        "createdAt": "2025-01-15T10:30:00.000Z"
+    "data": {
+      "items": [
+        {
+          "_id": "675a1451e9dcd6001234abcf",
+          "productId": "675a12b8e9dcd6001234abca",
+          "rating": 5,
+          "comment": "Excellent product!",
+          "imageUrl": "https://example.com/review.jpg",
+          "approved": true,
+          "createdAt": "2025-10-24T12:10:00.000Z",
+          "adminId": {
+            "_id": "675a10dbe9dcd6001234abc0",
+            "name": "Café Admin"
+          }
+        }
+      ],
+      "pagination": {
+        "limit": 10,
+        "nextCursor": "675a13f5e9dcd6001234abce"
       }
-    ]
+    }
   }
   ```
+
+### Get Reviews by Product (paginated)
+- **GET** `/api/reviews/product/:productId?limit=10&cursor=<reviewId>&approved=true`
+- **Query Params:** same as above plus required `productId` path parameter
+- Highlight: returns reviews scoped to the selected product; the response shape matches the global listing.
 
 ### Update Review (Admin Only)
 - **PUT** `/api/reviews/:id`

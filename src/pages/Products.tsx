@@ -11,6 +11,19 @@ import { ProductImageManager } from '../components/products/ProductImageManager'
 import { ProductVariantManager } from '../components/products/ProductVariantManager';
 import type { Product, Category } from '../types';
 
+type ProductFormState = {
+  categoryId: string;
+  name: string;
+  slug: string;
+  description: string;
+  price: number;
+  discountPercent: number;
+  quantity: number;
+  productType: string;
+  keywords: string;
+  features: string;
+};
+
 export function Products() {
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
@@ -22,7 +35,7 @@ export function Products() {
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [managingImagesProduct, setManagingImagesProduct] = useState<Product | null>(null);
   const [managingVariantsProduct, setManagingVariantsProduct] = useState<Product | null>(null);
-  const [formData, setFormData] = useState<any>({
+  const [formData, setFormData] = useState<ProductFormState>({
     categoryId: '',
     name: '',
     slug: '',
@@ -43,10 +56,11 @@ export function Products() {
   const fetchProducts = async () => {
     try {
       setLoading(true);
-      const response = await api.getProducts({ page, limit: 10, search });
+      const response = await api.getProducts({ page, limit: 10, search: search.trim() || undefined });
       if (response.success) {
-        setProducts(response.data.products || []);
-        setTotalPages(response.data.pagination?.totalPages || 1);
+        const data = response.data;
+        setProducts(data?.products ?? []);
+        setTotalPages(data?.pagination?.totalPages ?? 1);
       }
     } catch (error: any) {
       toast.error('Failed to load products');
@@ -59,7 +73,7 @@ export function Products() {
     try {
       const response = await api.getCategories();
       if (response.success) {
-        setCategories(response.data || []);
+        setCategories(response.data ?? []);
       }
     } catch (error) {
       console.error('Failed to load categories');
@@ -67,12 +81,46 @@ export function Products() {
   };
 
   const handleSubmit = async () => {
+    const keywords = formData.keywords
+      .split(',')
+      .map((keyword) => keyword.trim())
+      .filter(Boolean);
+
+    const features = formData.features
+      .split(',')
+      .map((feature) => feature.trim())
+      .filter(Boolean);
+
+    const payload = {
+      categoryId: formData.categoryId || null,
+      name: formData.name.trim(),
+      slug: formData.slug.trim(),
+      description: formData.description.trim() || undefined,
+      price: Number.isFinite(formData.price) ? formData.price : 0,
+      discountPercent: Number.isFinite(formData.discountPercent)
+        ? formData.discountPercent
+        : 0,
+      quantity: Number.isFinite(formData.quantity) ? formData.quantity : 0,
+      productType: formData.productType,
+      keywords: Array.isArray(keywords)
+        ? keywords.join(', ')
+        : (keywords as string) ?? '',
+      features: Array.isArray(features)
+        ? features.join(', ')
+        : (features as string) ?? '',
+    };
+
     try {
       if (editingProduct) {
-        await api.updateProduct(editingProduct._id, formData);
+        const productId = editingProduct.id ?? editingProduct._id;
+        if (!productId) {
+          toast.error('Unable to determine product identifier');
+          return;
+        }
+        await api.updateProduct(productId, payload);
         toast.success('Product updated successfully');
       } else {
-        await api.createProduct(formData);
+        await api.createProduct(payload);
         toast.success('Product created successfully');
       }
       setShowModal(false);
@@ -86,16 +134,20 @@ export function Products() {
   const handleEdit = (product: Product) => {
     setEditingProduct(product);
     setFormData({
-      categoryId: product.categoryId,
+      categoryId: product.categoryId ?? '',
       name: product.name,
       slug: product.slug,
-      description: product.description,
-      price: product.price,
-      discountPercent: product.discountPercent,
-      quantity: product.quantity,
-      productType: product.productType,
-      keywords: product.keywords,
-      features: product.features,
+      description: product.description ?? '',
+      price: product.price ?? 0,
+      discountPercent: product.discountPercent ?? 0,
+      quantity: product.quantity ?? 0,
+      productType: product.productType ?? 'coffee',
+      keywords: Array.isArray(product.keywords)
+        ? product.keywords.join(', ')
+        : (product.keywords as string) ?? '',
+      features: Array.isArray(product.features)
+        ? product.features.join(', ')
+        : (product.features as string) ?? '',
     });
     setShowModal(true);
   };
@@ -148,31 +200,36 @@ export function Products() {
     },
     {
       header: 'Price',
-      accessor: (row: Product) => `$${row.price.toFixed(2)}`,
+      accessor: (row: Product) =>
+        typeof row.price === 'number' ? `$${row.price.toFixed(2)}` : 'N/A',
     },
     {
       header: 'Discount',
-      accessor: (row: Product) => `${row.discountPercent}%`,
+      accessor: (row: Product) =>
+        typeof row.discountPercent === 'number' ? `${row.discountPercent}%` : 'N/A',
     },
     {
       header: 'Stock',
-      accessor: (row: Product) => (
-        <span
-          className={`px-2 py-1 rounded-full text-xs ${
-            row.quantity < 10
-              ? 'bg-red-100 text-red-700'
-              : row.quantity < 50
-              ? 'bg-yellow-100 text-yellow-700'
-              : 'bg-green-100 text-green-700'
-          }`}
-        >
-          {row.quantity}
-        </span>
-      ),
+      accessor: (row: Product) => {
+        const quantity = row.quantity ?? 0;
+        const badgeClass =
+          quantity < 10
+            ? 'bg-red-100 text-red-700'
+            : quantity < 50
+            ? 'bg-yellow-100 text-yellow-700'
+            : 'bg-green-100 text-green-700';
+
+        return (
+          <span className={`px-2 py-1 rounded-full text-xs ${badgeClass}`}>{quantity}</span>
+        );
+      },
     },
     {
       header: 'Rating',
-      accessor: (row: Product) => `${row.rating.toFixed(1)} (${row.totalRatings})`,
+      accessor: (row: Product) =>
+        typeof row.rating === 'number'
+          ? `${row.rating.toFixed(1)} (${row.totalRatings ?? 0})`
+          : 'N/A',
     },
     {
       header: 'Actions',
@@ -197,13 +254,27 @@ export function Products() {
           <Button size="sm" variant="ghost" onClick={() => handleEdit(row)}>
             <Edit size={16} />
           </Button>
-          <Button size="sm" variant="danger" onClick={() => handleDelete(row._id)}>
+          <Button
+            size="sm"
+            variant="danger"
+            onClick={() => {
+              const productId = row.id ?? row._id;
+              if (productId) {
+                handleDelete(productId);
+              } else {
+                toast.error('Unable to determine product identifier');
+              }
+            }}
+          >
             <Trash2 size={16} />
           </Button>
         </div>
       ),
     },
   ];
+
+  const managedImageProductId = managingImagesProduct?.id ?? managingImagesProduct?._id ?? null;
+  const managedVariantProductId = managingVariantsProduct?.id ?? managingVariantsProduct?._id ?? null;
 
   return (
     <div className="space-y-6">
@@ -302,7 +373,7 @@ export function Products() {
               >
                 <option value="">Select category</option>
                 {categories.map((cat) => (
-                  <option key={cat._id} value={cat._id}>
+                  <option key={cat.id ?? cat._id ?? cat.name} value={cat.id ?? cat._id ?? ''}>
                     {cat.name}
                   </option>
                 ))}
@@ -346,22 +417,32 @@ export function Products() {
               type="number"
               step="0.01"
               value={formData.price}
-              onChange={(e) => setFormData({ ...formData, price: parseFloat(e.target.value) })}
+              onChange={(e) => {
+                const value = parseFloat(e.target.value);
+                setFormData({ ...formData, price: Number.isNaN(value) ? 0 : value });
+              }}
               required
             />
             <Input
               label="Discount %"
               type="number"
               value={formData.discountPercent}
-              onChange={(e) =>
-                setFormData({ ...formData, discountPercent: parseInt(e.target.value) })
-              }
+              onChange={(e) => {
+                const value = parseInt(e.target.value, 10);
+                setFormData({
+                  ...formData,
+                  discountPercent: Number.isNaN(value) ? 0 : value,
+                });
+              }}
             />
             <Input
               label="Stock Quantity"
               type="number"
               value={formData.quantity}
-              onChange={(e) => setFormData({ ...formData, quantity: parseInt(e.target.value) })}
+              onChange={(e) => {
+                const value = parseInt(e.target.value, 10);
+                setFormData({ ...formData, quantity: Number.isNaN(value) ? 0 : value });
+              }}
               required
             />
           </div>
@@ -395,31 +476,25 @@ export function Products() {
         </div>
       </Modal>
 
-      {managingImagesProduct && (
+      {managingImagesProduct && managedImageProductId && (
         <Modal
           isOpen={!!managingImagesProduct}
           onClose={() => setManagingImagesProduct(null)}
           title={`Manage Images - ${managingImagesProduct.name}`}
           size="xl"
         >
-          <ProductImageManager
-            productId={managingImagesProduct._id}
-            onClose={() => setManagingImagesProduct(null)}
-          />
+          <ProductImageManager productId={managedImageProductId} />
         </Modal>
       )}
 
-      {managingVariantsProduct && (
+      {managingVariantsProduct && managedVariantProductId && (
         <Modal
           isOpen={!!managingVariantsProduct}
           onClose={() => setManagingVariantsProduct(null)}
           title={`Manage Variants - ${managingVariantsProduct.name}`}
           size="lg"
         >
-          <ProductVariantManager
-            productId={managingVariantsProduct._id}
-            onClose={() => setManagingVariantsProduct(null)}
-          />
+          <ProductVariantManager productId={managedVariantProductId} />
         </Modal>
       )}
     </div>
