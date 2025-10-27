@@ -26,7 +26,10 @@ export function Orders() {
   const [showDetailsModal, setShowDetailsModal] = useState(false);
   const [showStatusModal, setShowStatusModal] = useState(false);
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
-  const [statusUpdate, setStatusUpdate] = useState({ paymentStatus: '', deliveryStatus: '' });
+  const [statusUpdate, setStatusUpdate] = useState<{
+    paymentStatus: Order['paymentStatus'];
+    deliveryStatus: Order['deliveryStatus'];
+  }>({ paymentStatus: 'pending', deliveryStatus: 'processing' });
   const [modalLoading, setModalLoading] = useState(false);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [createOrderLoading, setCreateOrderLoading] = useState(false);
@@ -106,6 +109,81 @@ export function Orders() {
     return new Date().toISOString();
   };
 
+  const PAYMENT_STATUS_VALUES = ['pending', 'paid', 'failed'] as const;
+  const DELIVERY_STATUS_VALUES = ['processing', 'delivered', 'cancelled'] as const;
+
+  const getString = (value: unknown): string | undefined => {
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      return trimmed.length > 0 ? trimmed : undefined;
+    }
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return value.toString();
+    }
+    return undefined;
+  };
+
+  const buildAddressString = (value: unknown): string | undefined => {
+    if (!value) return undefined;
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      return trimmed.length > 0 ? trimmed : undefined;
+    }
+    if (typeof value === 'object') {
+      const addressObject = value as {
+        address?: unknown;
+        line1?: unknown;
+        line2?: unknown;
+        street?: unknown;
+        street1?: unknown;
+        street2?: unknown;
+        city?: unknown;
+        state?: unknown;
+        province?: unknown;
+        postalCode?: unknown;
+        postal_code?: unknown;
+        zip?: unknown;
+        country?: unknown;
+      };
+
+      const nestedAddress = buildAddressString(addressObject.address);
+      const parts = [
+        nestedAddress,
+        getString(addressObject.line1),
+        getString(addressObject.street),
+        getString(addressObject.street1),
+        getString(addressObject.line2),
+        getString(addressObject.street2),
+        getString(addressObject.city),
+        getString(addressObject.state) ?? getString(addressObject.province),
+        getString(addressObject.postalCode) ??
+          getString(addressObject.postal_code) ??
+          getString(addressObject.zip),
+        getString(addressObject.country),
+      ].filter(Boolean) as string[];
+
+      if (parts.length > 0) {
+        const uniqueParts = parts.filter((part, index) => parts.indexOf(part) === index);
+        return uniqueParts.join(', ');
+      }
+    }
+    return undefined;
+  };
+
+  const normalizeStatusValue = <T extends readonly string[]>(
+    value: unknown,
+    allowed: T,
+    fallback: T[number]
+  ): T[number] => {
+    if (typeof value === 'string') {
+      const normalized = value.trim().toLowerCase();
+      if (allowed.includes(normalized as T[number])) {
+        return normalized as T[number];
+      }
+    }
+    return fallback;
+  };
+
   const normalizeOrder = (
     rawOrder: Partial<Order> | (Partial<Order> & { [key: string]: unknown })
   ): Order => {
@@ -125,69 +203,182 @@ export function Orders() {
           ? (rawProduct as Product)
           : undefined;
 
+      const productId =
+        typeof rawProduct === 'string'
+          ? rawProduct
+          : (item as { productId?: string }).productId ??
+            (item as { product_id?: string }).product_id ??
+            product?.id ??
+            product?._id ??
+            '';
+
+      const quantityRaw =
+        typeof item.quantity === 'number'
+          ? item.quantity
+          : Number((item as { quantity?: number | string }).quantity ?? 0);
+      const quantity = Number.isFinite(quantityRaw) && quantityRaw > 0 ? quantityRaw : 0;
+
       const price =
         typeof item.price === 'number'
           ? item.price
-          : (item as { priceAtTime?: number }).priceAtTime ??
-            (item as { price_at_time?: number }).price_at_time ??
-            0;
+          : Number(
+              (item as { priceAtTime?: number | string }).priceAtTime ??
+                (item as { price_at_time?: number | string }).price_at_time ??
+                (item as { unitPrice?: number | string }).unitPrice ??
+                0
+            );
 
       const subtotal =
         typeof item.subtotal === 'number'
           ? item.subtotal
-          : (item as { subtotal?: number }).subtotal ?? price * item.quantity;
+          : Number(
+              (item as { subtotal?: number | string }).subtotal ??
+                (item as { lineTotal?: number | string }).lineTotal ??
+                price * quantity
+            );
 
       return {
         ...item,
+        productId: productId || (item as { productId?: string }).productId,
+        quantity,
         product,
         productName:
           item.productName ??
           (item as { product_name?: string }).product_name ??
           product?.name,
-        price,
-        subtotal,
+        price: Number.isFinite(price) ? price : 0,
+        subtotal: Number.isFinite(subtotal) ? subtotal : Number.isFinite(price * quantity) ? price * quantity : 0,
       };
     });
 
-    const id = extractId(orderRecord.id ?? (orderRecord as { _id?: unknown })._id);
+    const primaryId = extractId(orderRecord.id);
+    const secondaryId = extractId((orderRecord as { _id?: unknown })._id);
+    const id = primaryId || secondaryId;
 
     const totalAmountValue =
       typeof orderRecord.totalAmount === 'number'
         ? orderRecord.totalAmount
-        : (orderRecord as { total_amount?: number }).total_amount ??
-          items.reduce((sum, item) => sum + (item.subtotal ?? item.price * item.quantity), 0);
+        : Number(
+            (orderRecord as { total_amount?: number | string }).total_amount ??
+              (orderRecord as { amount?: number | string }).amount ??
+              items.reduce(
+                (sum, item) =>
+                  sum + (Number.isFinite(item.subtotal) ? (item.subtotal as number) : (item.price as number) * item.quantity),
+                0
+              )
+          );
 
-    return {
+    const sessionId =
+      getString(orderRecord.sessionId) ??
+      getString((orderRecord as { session_id?: unknown }).session_id) ??
+      (typeof orderRecord.session === 'object' && orderRecord.session
+        ? getString((orderRecord.session as { id?: unknown }).id) ??
+          getString((orderRecord.session as { sessionId?: unknown }).sessionId)
+        : undefined) ??
+      '';
+
+    const customerEmail =
+      getString(orderRecord.customerEmail) ??
+      getString((orderRecord as { customer_email?: unknown }).customer_email) ??
+      getString((orderRecord as { email?: unknown }).email) ??
+      (typeof orderRecord.customer === 'object' && orderRecord.customer
+        ? getString((orderRecord.customer as { email?: unknown }).email)
+        : undefined) ??
+      (typeof orderRecord.customerDetails === 'object' && orderRecord.customerDetails
+        ? getString((orderRecord.customerDetails as { email?: unknown }).email)
+        : undefined) ??
+      (typeof (orderRecord as { customer_details?: unknown }).customer_details === 'object' &&
+      (orderRecord as { customer_details?: unknown }).customer_details
+        ? getString(
+            ((orderRecord as { customer_details?: { email?: unknown } }).customer_details as {
+              email?: unknown;
+            }).email
+          )
+        : undefined) ??
+      '';
+
+    const phoneFromCustomer =
+      typeof orderRecord.customer === 'object' && orderRecord.customer
+        ? getString((orderRecord.customer as { phone?: unknown }).phone) ??
+          getString((orderRecord.customer as { phoneNumber?: unknown }).phoneNumber)
+        : undefined;
+    const phoneFromCustomerDetails =
+      typeof orderRecord.customerDetails === 'object' && orderRecord.customerDetails
+        ? getString((orderRecord.customerDetails as { phone?: unknown }).phone) ??
+          getString((orderRecord.customerDetails as { phoneNumber?: unknown }).phoneNumber)
+        : undefined;
+    const phoneFromSnake =
+      typeof (orderRecord as { customer_details?: unknown }).customer_details === 'object' &&
+      (orderRecord as { customer_details?: unknown }).customer_details
+        ? getString(
+            ((orderRecord as { customer_details?: { phone?: unknown; phoneNumber?: unknown } }).customer_details as {
+              phone?: unknown;
+              phoneNumber?: unknown;
+            }).phone ??
+              ((orderRecord as { customer_details?: { phone?: unknown; phoneNumber?: unknown } }).customer_details as {
+                phone?: unknown;
+                phoneNumber?: unknown;
+              }).phoneNumber
+          )
+        : undefined;
+
+    const customerPhone =
+      getString(orderRecord.customerPhone) ??
+      getString((orderRecord as { customer_phone?: unknown }).customer_phone) ??
+      getString((orderRecord as { phone?: unknown }).phone) ??
+      phoneFromCustomer ??
+      phoneFromCustomerDetails ??
+      phoneFromSnake;
+
+    const shippingCandidate =
+      orderRecord.shippingAddress ??
+      (orderRecord as { shipping_address?: unknown }).shipping_address ??
+      (orderRecord as { shipping?: unknown }).shipping ??
+      (orderRecord as { shippingDetails?: unknown }).shippingDetails ??
+      (orderRecord as { shipping_details?: unknown }).shipping_details;
+
+    const shippingAddress =
+      buildAddressString(shippingCandidate) ??
+      (typeof shippingCandidate === 'object' && shippingCandidate
+        ? buildAddressString((shippingCandidate as { address?: unknown }).address)
+        : undefined) ??
+      getString(orderRecord.shippingAddress) ??
+      '';
+
+    const paymentStatus = normalizeStatusValue(
+      orderRecord.paymentStatus ??
+        (orderRecord as { payment_status?: unknown }).payment_status ??
+        (typeof orderRecord.status === 'object' && orderRecord.status
+          ? (orderRecord.status as { payment?: unknown; paymentStatus?: unknown }).payment ??
+            (orderRecord.status as { payment?: unknown; paymentStatus?: unknown }).paymentStatus
+          : undefined),
+      PAYMENT_STATUS_VALUES,
+      'pending'
+    );
+
+    const deliveryStatus = normalizeStatusValue(
+      orderRecord.deliveryStatus ??
+        (orderRecord as { delivery_status?: unknown }).delivery_status ??
+        (typeof orderRecord.status === 'object' && orderRecord.status
+          ? (orderRecord.status as { delivery?: unknown; deliveryStatus?: unknown }).delivery ??
+            (orderRecord.status as { delivery?: unknown; deliveryStatus?: unknown }).deliveryStatus
+          : undefined),
+      DELIVERY_STATUS_VALUES,
+      'processing'
+    );
+
+    const normalizedResult = {
+      ...(orderRecord as Order),
       id,
-      _id: extractId((orderRecord as { _id?: unknown })._id),
-      sessionId:
-        (orderRecord.sessionId as string | undefined) ??
-        (orderRecord as { session_id?: string }).session_id ??
-        '',
-      customerEmail:
-        (orderRecord.customerEmail as string | undefined) ??
-        (orderRecord as { customer_email?: string }).customer_email ??
-        (orderRecord as { email?: string }).email ??
-        '',
-      customerPhone:
-        (orderRecord.customerPhone as string | undefined) ??
-        (orderRecord as { customer_phone?: string }).customer_phone ??
-        (orderRecord as { phone?: string }).phone,
-      shippingAddress:
-        (orderRecord.shippingAddress as string | undefined) ??
-        (orderRecord as { shipping_address?: string }).shipping_address ??
-        (orderRecord as { address?: string }).address ??
-        '',
-      items,
-      totalAmount: totalAmountValue,
-      paymentStatus:
-        (orderRecord.paymentStatus as Order['paymentStatus'] | undefined) ??
-        (orderRecord as { payment_status?: Order['paymentStatus'] }).payment_status ??
-        'pending',
-      deliveryStatus:
-        (orderRecord.deliveryStatus as Order['deliveryStatus'] | undefined) ??
-        (orderRecord as { delivery_status?: Order['deliveryStatus'] }).delivery_status ??
-        'processing',
+      _id: secondaryId || id,
+      sessionId,
+      customerEmail,
+      customerPhone,
+      shippingAddress,
+      items: items as Order['items'],
+      totalAmount: Number.isFinite(totalAmountValue) ? totalAmountValue : 0,
+      paymentStatus,
+      deliveryStatus,
       paymentDetails:
         orderRecord.paymentDetails ??
         (orderRecord as { payment_details?: unknown }).payment_details,
@@ -201,6 +392,7 @@ export function Orders() {
           (orderRecord as { created_at?: unknown }).created_at
       ),
     };
+    return normalizedResult;
   };
 
   const resetCreateOrderForm = () => {
@@ -229,8 +421,23 @@ export function Orders() {
 
       const response = await api.getOrders(filters);
       if (response.success) {
-        setOrders(response.data?.orders ?? []);
-        setTotalPages(response.data?.pagination?.totalPages ?? 1);
+        const raw = response.data?.orders ?? [];
+        const normalized = raw.map(normalizeOrder);
+        setOrders(normalized);
+        const pg = response.data?.pagination as
+        | { page?: number; limit?: number; total?: number; totalPages?: number }
+        | undefined;
+
+        const computedTotalPages =
+          typeof pg?.totalPages === 'number'
+            ? pg.totalPages
+            : typeof (pg as any)?.pages === 'number'
+            ? (pg as any).pages
+            : typeof pg?.total === 'number' && typeof pg?.limit === 'number' && pg.limit > 0
+            ? Math.ceil(pg.total / pg.limit)
+            : 1;
+
+        setTotalPages(computedTotalPages);
       }
     } catch (error) {
       toast.error('Failed to load orders');
@@ -239,29 +446,105 @@ export function Orders() {
     }
   };
 
+
   const loadOrderDetails = async (order: Order) => {
-    const orderId = order.id ?? order._id;
+    const normalizedOrder = normalizeOrder(order);
+    const orderId = normalizedOrder.id || normalizedOrder._id;
     if (!orderId) {
-      return normalizeOrder(order);
+      return normalizedOrder;
     }
 
-    const hasDetailedItems = Array.isArray(order.items) && order.items.length > 0;
-    if (hasDetailedItems && order.shippingAddress) {
-      return normalizeOrder(order);
+    const hasDetailedItems =
+      Array.isArray(normalizedOrder.items) &&
+      normalizedOrder.items.length > 0 &&
+      normalizedOrder.items.some((item) => item.productName || item.product) &&
+      normalizedOrder.items.some((item) => Number(item.subtotal) > 0 || Number(item.price) > 0);
+
+    if (hasDetailedItems && normalizedOrder.shippingAddress) {
+      return normalizedOrder;
     }
 
     try {
       const response = await api.getOrder(orderId);
       if (response.success && response.data) {
-        return normalizeOrder(response.data as Order);
+        const data: any = response.data;
+
+        const mapItems = (source: any[]) =>
+          source.map((it: any) => {
+            const rawProduct =
+              it.product ??
+              it.productObject ??
+              (typeof it.productId === 'object' && it.productId !== null ? it.productId : undefined);
+
+            const productId =
+              typeof it.productId === 'string'
+                ? it.productId
+                : rawProduct?.id || rawProduct?._id || '';
+
+            const quantity = Number(it.quantity) || 0;
+            const unitPrice =
+              Number(
+                it.priceAtTime ??
+                  it.price_at_time ??
+                  it.unitPrice ??
+                  it.unit_price ??
+                  it.price ??
+                  it.amount ??
+                  0
+              ) || 0;
+
+            const subtotalCandidate =
+              Number(
+                it.subtotal ??
+                  it.lineTotal ??
+                  it.line_total ??
+                  it.total ??
+                  it.amount_total ??
+                  it.totalAmount ??
+                  0
+              ) || unitPrice * quantity;
+
+            return {
+              productId,
+              product: rawProduct,
+              productName:
+                it.productName ??
+                it.product_name ??
+                rawProduct?.name ??
+                rawProduct?.title ??
+                undefined,
+              quantity,
+              price: unitPrice,
+              subtotal: Number.isFinite(subtotalCandidate) ? subtotalCandidate : unitPrice * quantity,
+            };
+          });
+
+        const merged =
+          data && typeof data === 'object' && 'order' in data
+            ? {
+                ...(data.order || {}),
+                items: Array.isArray(data.items)
+                  ? mapItems(data.items)
+                  : Array.isArray(data.order?.items)
+                  ? mapItems(data.order.items)
+                  : [],
+                paymentDetails:
+                  data.transaction ??
+                    data.transactions ??
+                    data.order?.paymentDetails ??
+                    data.order?.payment_details,
+              }
+            : data;
+        return normalizeOrder(merged as Order);
       }
     } catch (error) {
       console.error('Failed to fetch order details', error);
       throw error;
     }
 
-    return normalizeOrder(order);
+    return normalizedOrder;
   };
+
 
   const populateOrderState = (order: Order) => {
     const normalized = normalizeOrder(order);
@@ -273,34 +556,51 @@ export function Orders() {
   };
 
   const handleViewOrder = async (order: Order) => {
-    setShowStatusModal(false);
-    setShowDetailsModal(true);
     setModalLoading(true);
-    setSelectedOrder(null);
-
+    const baseOrder = normalizeOrder(order);
     try {
-      const detailedOrder = await loadOrderDetails(order);
+      const detailedOrder = await loadOrderDetails(baseOrder);
       populateOrderState(detailedOrder);
+      setShowStatusModal(false);
+      setShowDetailsModal(true);
     } catch (error) {
-      toast.error('Failed to load order details');
-      populateOrderState(order);
+      populateOrderState(baseOrder);
+      setShowStatusModal(false);
+      setShowDetailsModal(true);
+      toast.error('Failed to load order details, showing cached values');
     } finally {
       setModalLoading(false);
     }
   };
 
   const handleOpenStatusModal = async (order: Order) => {
-    populateOrderState(order);
-    setShowDetailsModal(false);
-    setShowStatusModal(true);
     setModalLoading(true);
-
+    const baseOrder = normalizeOrder(order);
     try {
-      const detailedOrder = await loadOrderDetails(order);
-      populateOrderState(detailedOrder);
+      // Always load details first to get the authoritative statuses
+      const detailed = await loadOrderDetails(baseOrder);
+      const normalized = normalizeOrder(detailed);
+
+      // Set state from the normalized detail BEFORE opening
+      setSelectedOrder(normalized);
+      setStatusUpdate({
+        paymentStatus: normalized.paymentStatus,
+        deliveryStatus: normalized.deliveryStatus,
+      });
+
+      setShowDetailsModal(false);
+      setShowStatusModal(true);
     } catch (error) {
-      toast.error('Failed to load order details');
-      populateOrderState(order);
+      // Fallback: still open with whatever we have, but normalized
+      const normalized = baseOrder;
+      setSelectedOrder(normalized);
+      setStatusUpdate({
+        paymentStatus: normalized.paymentStatus,
+        deliveryStatus: normalized.deliveryStatus,
+      });
+      setShowDetailsModal(false);
+      setShowStatusModal(true);
+      toast.error('Failed to load full order details, showing cached values');
     } finally {
       setModalLoading(false);
     }
@@ -411,7 +711,7 @@ export function Orders() {
   const handleUpdateStatus = async () => {
     if (!selectedOrder) return;
 
-    const orderId = selectedOrder.id ?? selectedOrder._id;
+    const orderId = selectedOrder.id || selectedOrder._id;
     if (!orderId) {
       toast.error('Unable to determine order identifier');
       return;
@@ -453,15 +753,17 @@ export function Orders() {
     {
       header: 'Order ID',
       accessor: (row: Order) => (
-        <span className="font-mono text-sm">{(row.id ?? row._id)?.slice(-8)}</span>
+        <span className="font-mono text-sm">
+          {(row.id && row.id.length > 0 ? row.id : row._id || '').slice(-8)}
+        </span>
       ),
     },
     {
       header: 'Customer',
       accessor: (row: Order) => (
         <div>
-          <p className="font-medium">{row.customerEmail}</p>
-          <p className="text-xs text-[#775596]">{row.customerPhone}</p>
+          <p className="font-medium">{row.customerEmail || 'N/A'}</p>
+          <p className="text-xs text-[#775596]">{row.customerPhone || 'N/A'}</p>
         </div>
       ),
     },
@@ -529,7 +831,7 @@ export function Orders() {
             size="sm"
             variant="danger"
             onClick={() => {
-              const orderId = row.id ?? row._id;
+              const orderId = (row.id && row.id.length > 0 ? row.id : undefined) ?? row._id;
               if (orderId) {
                 handleDelete(orderId);
               } else {
@@ -911,7 +1213,10 @@ export function Orders() {
                 <select
                   value={statusUpdate.paymentStatus}
                   onChange={(e) =>
-                    setStatusUpdate({ ...statusUpdate, paymentStatus: e.target.value })
+                    setStatusUpdate((prev) => ({
+                      ...prev,
+                      paymentStatus: e.target.value as Order['paymentStatus'],
+                    }))
                   }
                   className="w-full px-4 py-2 border border-[#E5E5E5] rounded-lg focus:outline-none focus:ring-2 focus:ring-[#9268AF]"
                 >
@@ -928,7 +1233,10 @@ export function Orders() {
                 <select
                   value={statusUpdate.deliveryStatus}
                   onChange={(e) =>
-                    setStatusUpdate({ ...statusUpdate, deliveryStatus: e.target.value })
+                    setStatusUpdate((prev) => ({
+                      ...prev,
+                      deliveryStatus: e.target.value as Order['deliveryStatus'],
+                    }))
                   }
                   className="w-full px-4 py-2 border border-[#E5E5E5] rounded-lg focus:outline-none focus:ring-2 focus:ring-[#9268AF]"
                 >

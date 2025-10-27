@@ -691,7 +691,57 @@ class ApiService {
       return payload;
     }
 
-    const orderData = payload.data ? normalizeOrderData(payload.data) : undefined;
+    const rawData = payload.data as unknown;
+
+    if (!rawData) {
+      return {
+        ...payload,
+        data: rawData as undefined,
+      };
+    }
+
+    const isCompoundOrder =
+      typeof rawData === 'object' &&
+      rawData !== null &&
+      'order' in rawData &&
+      (rawData as { order?: unknown }).order;
+
+    if (isCompoundOrder) {
+      const container = rawData as {
+        order?: Partial<Order>;
+        items?: Partial<OrderItem>[];
+        transactions?: unknown;
+        transaction?: unknown;
+      };
+
+      const baseOrder = container.order ?? {};
+      const items =
+        Array.isArray(container.items) && container.items.length > 0
+          ? container.items
+          : Array.isArray((baseOrder as { items?: Partial<OrderItem>[] }).items)
+          ? ((baseOrder as { items?: Partial<OrderItem>[] }).items as Partial<OrderItem>[])
+          : [];
+
+      const paymentDetails =
+        container.transaction ??
+        container.transactions ??
+        (baseOrder as { paymentDetails?: unknown }).paymentDetails ??
+        (baseOrder as { payment_details?: unknown }).payment_details;
+
+      const mergedOrder: Partial<Order> = {
+        ...baseOrder,
+        items,
+        paymentDetails,
+      };
+
+      const orderData = normalizeOrderData(mergedOrder);
+      return {
+        ...payload,
+        data: orderData,
+      };
+    }
+
+    const orderData = normalizeOrderData(rawData as Partial<Order>);
 
     return {
       ...payload,
