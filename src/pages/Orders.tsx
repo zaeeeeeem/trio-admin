@@ -8,7 +8,7 @@ import { ProductSelector } from '../components/ui/ProductSelector';
 import { api } from '../services/api';
 import { toast } from '../utils/toast';
 import { Search, Eye, Trash2, Edit2, Plus } from 'lucide-react';
-import type { Order, Product, CreateOrderPayload } from '../types';
+import type { Order, Product, ProductImage, CreateOrderPayload } from '../types';
 
 type OrderItemForm = {
   product: Product | null;
@@ -59,6 +59,84 @@ export function Orders() {
       return '$0.00';
     }
     return `$${value.toFixed(2)}`;
+  };
+
+  const ORDER_ITEM_FALLBACK_IMAGE = 'https://via.placeholder.com/48?text=No+Image';
+
+  const resolveImageSource = (image?: ProductImage | null): string | undefined => {
+    if (!image) {
+      return undefined;
+    }
+    const candidates: Array<unknown> = [
+      image.viewUrl,
+      image.publicUrl,
+      image.imageUrl,
+      (image as { url?: unknown }).url,
+      (image as { Location?: unknown }).Location,
+      (image as { location?: unknown }).location,
+      (image as { secureUrl?: unknown }).secureUrl,
+      (image as { secure_url?: unknown }).secure_url,
+      (image as { downloadUrl?: unknown }).downloadUrl,
+      (image as { downloadURL?: unknown }).downloadURL,
+      (image as { previewUrl?: unknown }).previewUrl,
+      (image as { preview_url?: unknown }).preview_url,
+    ];
+
+    for (const candidate of candidates) {
+      if (typeof candidate === 'string') {
+        const trimmed = candidate.trim();
+        if (trimmed.length > 0) {
+          return trimmed;
+        }
+      }
+    }
+
+    return undefined;
+  };
+
+  const resolveProductFallbackImage = (product?: Product | null): string | undefined => {
+    if (!product) {
+      return undefined;
+    }
+    const candidates: Array<unknown> = [
+      (product as { imageUrl?: unknown }).imageUrl,
+      (product as { image_url?: unknown }).image_url,
+      (product as { image?: unknown }).image,
+      (product as { thumbnail?: unknown }).thumbnail,
+      (product as { thumbnailUrl?: unknown }).thumbnailUrl,
+      (product as { thumbnail_url?: unknown }).thumbnail_url,
+      (product as { coverImage?: unknown }).coverImage,
+      (product as { cover_image?: unknown }).cover_image,
+      (product as { featuredImage?: unknown }).featuredImage,
+      (product as { featured_image?: unknown }).featured_image,
+      (product as { primaryImageUrl?: unknown }).primaryImageUrl,
+      (product as { primary_image_url?: unknown }).primary_image_url,
+      (product as { mainImage?: unknown }).mainImage,
+      (product as { main_image?: unknown }).main_image,
+      (product as { signedUrl?: unknown }).signedUrl,
+      (product as { SignedUrl?: unknown }).SignedUrl,
+    ];
+
+    for (const candidate of candidates) {
+      if (typeof candidate === 'string') {
+        const trimmed = candidate.trim();
+        if (trimmed.length > 0) {
+          return trimmed;
+        }
+      }
+    }
+
+    return undefined;
+  };
+
+  const getOrderItemImage = (item: Order['items'][number]): string => {
+    const productImages = item.product?.images ?? [];
+    const primary = productImages.find((img) => img.isPrimary) ?? productImages[0];
+    return (
+      resolveImageSource(primary ?? null) ??
+      resolveProductFallbackImage(item.product ?? null) ??
+      ORDER_ITEM_FALLBACK_IMAGE
+    );
   };
 
   const extractId = (value: unknown): string => {
@@ -519,7 +597,7 @@ export function Orders() {
             };
           });
 
-        const merged =
+        let merged =
           data && typeof data === 'object' && 'order' in data
             ? {
                 ...(data.order || {}),
@@ -530,11 +608,124 @@ export function Orders() {
                   : [],
                 paymentDetails:
                   data.transaction ??
-                    data.transactions ??
-                    data.order?.paymentDetails ??
-                    data.order?.payment_details,
+                  data.transactions ??
+                  data.order?.paymentDetails ??
+                  data.order?.payment_details,
               }
             : data;
+
+        if (merged && Array.isArray((merged as { items?: unknown }).items)) {
+          const itemsWithImages = await Promise.all(
+            ((merged as { items: any[] }).items ?? []).map(async (item: any) => {
+              const productLike = item.product;
+              const rawProductId =
+                productLike?.id ??
+                productLike?._id ??
+                item.productId ??
+                item.product_id ??
+                (typeof item.productId === 'object' && item.productId !== null
+                  ? item.productId._id ?? item.productId.id
+                  : undefined);
+
+              const productId = typeof rawProductId === 'string' ? rawProductId : undefined;
+
+              let productData: Product | undefined =
+                productLike && typeof productLike === 'object' ? (productLike as Product) : undefined;
+
+              const hasUsableImage =
+                (productData?.images ?? []).some((img) => Boolean(resolveImageSource(img))) ||
+                Boolean(resolveProductFallbackImage(productData));
+
+              if (!productId && hasUsableImage) {
+                return item;
+              }
+
+              if (productId && (!productData || !hasUsableImage)) {
+                try {
+                  const productResponse = await api.getProduct(productId);
+                  if (productResponse.success && productResponse.data) {
+                    productData = productResponse.data;
+                  }
+                } catch (productError) {
+                  console.error('Failed to fetch product details for order item', productError);
+                }
+              }
+
+              let finalHasImage =
+                (productData?.images ?? []).some((img) => Boolean(resolveImageSource(img))) ||
+                Boolean(resolveProductFallbackImage(productData));
+
+              if (productId && !finalHasImage) {
+                try {
+                  const imagesResponse = await api.getProductImages(productId, { limit: 1 });
+                  if (imagesResponse.success && imagesResponse.data?.items?.length) {
+                    const images = imagesResponse.data.items;
+                    const productNameCandidate =
+                      productData?.name ??
+                      (productLike as { name?: string })?.name ??
+                      (item as { productName?: string }).productName ??
+                      (productId ? `Product ${productId.slice(-8)}` : 'Product');
+                    const productSlugCandidate =
+                      (productData as { slug?: string })?.slug ??
+                      (productLike as { slug?: string })?.slug ??
+                      (item as { productSlug?: string }).productSlug ??
+                      productId ??
+                      productNameCandidate;
+                    productData = {
+                      ...(productData ?? {
+                        description: undefined,
+                        categoryId: undefined,
+                        productType: undefined,
+                        price: undefined,
+                        discountPercent: undefined,
+                        discountedPrice: undefined,
+                        quantity: undefined,
+                        status: undefined,
+                        rating: undefined,
+                        totalRatings: undefined,
+                        keywords: undefined,
+                        features: undefined,
+                        legacyVariantAttributes: [],
+                        variants: [],
+                        createdAt: new Date().toISOString(),
+                        updatedAt: new Date().toISOString(),
+                      }),
+                      id: productData?.id ?? productId,
+                      _id: productData?._id ?? productId,
+                      name: productNameCandidate,
+                      slug: productSlugCandidate,
+                      createdAt:
+                        (productData as { createdAt?: string })?.createdAt ??
+                        new Date().toISOString(),
+                      updatedAt:
+                        (productData as { updatedAt?: string })?.updatedAt ??
+                        new Date().toISOString(),
+                      images,
+                    } as Product;
+                    finalHasImage = images.some((img) => Boolean(resolveImageSource(img)));
+                  }
+                } catch (imageError) {
+                  console.error('Failed to fetch product images for order item', imageError);
+                }
+              }
+
+              if (productData) {
+                return {
+                  ...item,
+                  product: productData,
+                };
+              }
+
+              return item;
+            })
+          );
+
+          merged = {
+            ...(merged as Record<string, unknown>),
+            items: itemsWithImages,
+          };
+        }
+
         return normalizeOrder(merged as Order);
       }
     } catch (error) {
@@ -1124,13 +1315,20 @@ export function Orders() {
                       key={`${item.productId}-${index}`}
                       className="flex justify-between gap-4 p-3 bg-[#F2DFFF] bg-opacity-30 rounded-lg"
                     >
-                      <div>
-                        <p className="font-medium text-[#1E2934BA]">
-                          {item.product?.name ?? item.productName ?? 'Unknown product'}
-                        </p>
-                        <p className="text-xs text-[#775596]">
-                          Qty: {item.quantity}
-                        </p>
+                      <div className="flex items-start gap-3">
+                        <img
+                          src={getOrderItemImage(item)}
+                          alt={item.product?.name ?? item.productName ?? 'Product image'}
+                          className="h-12 w-12 rounded-lg object-cover"
+                        />
+                        <div>
+                          <p className="font-medium text-[#1E2934BA]">
+                            {item.product?.name ?? item.productName ?? 'Unknown product'}
+                          </p>
+                          <p className="text-xs text-[#775596]">
+                            Qty: {item.quantity}
+                          </p>
+                        </div>
                       </div>
                       <div className="text-right">
                         <p className="text-sm text-[#775596]">

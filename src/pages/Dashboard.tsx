@@ -121,7 +121,7 @@ export function Dashboard() {
           </Card>
         ))}
       </div>
-
+{/*
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <Card title="Best Selling Products">
           {bestSellers.length > 0 ? (
@@ -208,7 +208,7 @@ export function Dashboard() {
             </div>
           ))}
         </div>
-      </Card>
+      </Card> */}
     </div>
   );
 }

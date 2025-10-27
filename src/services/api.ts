@@ -35,20 +35,98 @@ const isOrderLike = (value: unknown): value is Order & { _id?: string } => {
   return 'customerEmail' in value && 'paymentStatus' in value && 'deliveryStatus' in value;
 };
 
+const extractUrl = (value: unknown): string | undefined => {
+  if (!value) {
+    return undefined;
+  }
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : undefined;
+  }
+  if (typeof value === 'object') {
+    const source = value as {
+      url?: unknown;
+      href?: unknown;
+      src?: unknown;
+      Location?: unknown;
+      location?: unknown;
+      secureUrl?: unknown;
+      secure_url?: unknown;
+      publicUrl?: unknown;
+      public_url?: unknown;
+      downloadUrl?: unknown;
+      downloadURL?: unknown;
+      signedUrl?: unknown;
+      SignedUrl?: unknown;
+      previewUrl?: unknown;
+      preview_url?: unknown;
+      path?: unknown;
+      value?: unknown;
+    };
+
+    return (
+      extractUrl(source.url) ??
+      extractUrl(source.href) ??
+      extractUrl(source.src) ??
+      extractUrl(source.Location) ??
+      extractUrl(source.location) ??
+      extractUrl(source.secureUrl) ??
+      extractUrl(source.secure_url) ??
+      extractUrl(source.publicUrl) ??
+      extractUrl(source.public_url) ??
+      extractUrl(source.downloadUrl) ??
+      extractUrl(source.downloadURL) ??
+      extractUrl(source.signedUrl) ??
+      extractUrl(source.SignedUrl) ??
+      extractUrl(source.previewUrl) ??
+      extractUrl(source.preview_url) ??
+      extractUrl(source.path) ??
+      extractUrl(source.value)
+    );
+  }
+  return undefined;
+};
+
+const resolveUrl = (...candidates: unknown[]): string | undefined => {
+  for (const candidate of candidates) {
+    const resolved = extractUrl(candidate);
+    if (resolved) {
+      return resolved;
+    }
+  }
+  return undefined;
+};
+
 const normalizeProductImage = (image: Partial<ProductImage>): ProductImage => {
-  const rawPublicUrl =
-    image.publicUrl ??
-    (image as { secureUrl?: string }).secureUrl ??
-    image.imageUrl ??
-    (image as { url?: string }).url;
-  const viewUrl = (image as { viewUrl?: string }).viewUrl;
+  const viewUrl = resolveUrl((image as { viewUrl?: unknown }).viewUrl);
+  const primaryUrl = resolveUrl(
+    image.publicUrl,
+    (image as { public_url?: unknown }).public_url,
+    (image as { secureUrl?: unknown }).secureUrl,
+    (image as { secure_url?: unknown }).secure_url,
+    (image as { Location?: unknown }).Location,
+    (image as { location?: unknown }).location,
+    (image as { url?: unknown }).url
+  );
+  const imageUrl = resolveUrl(
+    image.imageUrl,
+    (image as { image_url?: unknown }).image_url,
+    viewUrl,
+    primaryUrl,
+    (image as { previewUrl?: unknown }).previewUrl,
+    (image as { preview_url?: unknown }).preview_url,
+    (image as { downloadUrl?: unknown }).downloadUrl,
+    (image as { downloadURL?: unknown }).downloadURL
+  );
+
+  const finalUrl = imageUrl ?? viewUrl ?? primaryUrl;
 
   return {
     _id: image._id ?? (image as { id?: string }).id ?? '',
     productId: image.productId ?? '',
-    publicUrl: rawPublicUrl ?? undefined,
+    publicUrl: primaryUrl ?? undefined,
     viewUrl: viewUrl ?? undefined,
-    imageUrl: image.imageUrl ?? rawPublicUrl ?? viewUrl ?? undefined,
+    imageUrl: finalUrl,
     isPrimary: Boolean(image.isPrimary),
     alt: image.alt,
     sortOrder: image.sortOrder,
@@ -565,10 +643,10 @@ class ApiService {
     }
 
     const productData = payload.data
-      ? {
+      ? normalizeProduct({
           ...payload.data,
           id: payload.data.id ?? payload.data._id ?? id,
-        }
+        })
       : undefined;
 
     return {
